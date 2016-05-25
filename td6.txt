@@ -1,0 +1,146 @@
+package opsys1.addressTranslationSim;
+import opsys1.vmm.Frame;
+import opsys1.vmm.PageTableEntry;
+import opsys1.vmm.TLBEntry;
+
+import java.io.*;
+
+public class VMsim
+{
+
+	private static final int PAGE_TABLE_ENTRIES = 256;
+	private static final int NUMBER_OF_FRAMES = 256;
+	private static final int PHYSICAL_MEMORY_SIZE = Frame.PAGE_SIZE * NUMBER_OF_FRAMES;
+	private static final int TLB_SIZE = 16;
+	private static final int PAGE_MASK = 0xff00;
+	private static final int PAGE_SHIFT = 8;
+	private static final int OFFSET_MASK = 0xff;
+	private BufferedReader r = null;
+	private int nextFrameNumber;	
+	private int nextTLBEntry;		
+	private PageTableEntry[] pageTable;	
+	private Frame[] physicalMemory;		
+	private TLBEntry[] TLB;	
+	private int pageFaults;		
+	private int TLBHits;		
+	private int numberOfAddresses;	
+
+	public VMsim() {
+
+		pageTable = new PageTableEntry[PAGE_TABLE_ENTRIES];
+		for (int i = 0; i < PAGE_TABLE_ENTRIES; i++)
+			pageTable[i] = new PageTableEntry();
+	
+		TLB = new TLBEntry[TLB_SIZE];
+		for (int i = 0; i < TLB_SIZE; i++)
+			TLB[i] = new TLBEntry();
+
+		physicalMemory = new Frame[NUMBER_OF_FRAMES];
+		for (int i = 0; i < NUMBER_OF_FRAMES; i++) {
+			physicalMemory[i] = new Frame();
+			
+		}
+		nextFrameNumber = nextTLBEntry = 0;
+		pageFaults = 0;
+		TLBHits = 0;
+		
+		for (int i = 0; i < PAGE_TABLE_ENTRIES/2; i++)
+			pageTable[i].setMapping(PAGE_TABLE_ENTRIES - i -1);
+	}
+
+	public int getPageNumber(int virtualAddress) {
+		return  (virtualAddress & PAGE_MASK) >> PAGE_SHIFT;
+	}
+
+	public int getOffset(int virtualAddress) {
+		return (virtualAddress & OFFSET_MASK);
+	}
+
+	public int checkTLB(int pageNumber) {
+		int frameNumber = -1;
+	
+		for (int i = 0; i < TLB_SIZE; i++) {
+			if (TLB[i].checkPageNumber(pageNumber)) {
+				frameNumber = TLB[i].getFrameNumber();
+				TLBHits++;
+				break;
+			}
+		}
+		return frameNumber;
+	}
+
+	public void setTLBMapping(int pageNumber, int frameNumber) {
+		TLB[nextTLBEntry].setMapping(pageNumber, frameNumber);
+		nextTLBEntry = (nextTLBEntry + 1) % TLB_SIZE;
+	}
+	
+	public int getPhysicalAddress(int virtualAddress) throws java.io.IOException {
+		int  pageNumber;	
+		int  offset;	
+		int  frameNumber;	
+		
+		pageNumber = getPageNumber(virtualAddress);
+		offset = getOffset(virtualAddress);
+		if ( (frameNumber = checkTLB(pageNumber)) == -1 ) { 
+			if (pageTable[pageNumber].getValidBit() == true) {
+				frameNumber = pageTable[pageNumber].getFrameNumber();
+			} else { 
+				pageFaults++;
+			}
+			setTLBMapping(pageNumber, frameNumber);	
+		}
+		if (frameNumber == -1)
+			return (-1);
+		else
+			return ((frameNumber << PAGE_SHIFT) + offset);
+	}
+
+	public byte getValue(int physicalAddress) throws java.io.IOException {
+		return physicalMemory[((physicalAddress & PAGE_MASK) >> PAGE_SHIFT)].readWord(physicalAddress & OFFSET_MASK);
+	}
+	
+	public void generateStatistics() {
+		System.out.println("Number of Translated Addresses = " + numberOfAddresses);
+		System.out.println("Page Faults = " + pageFaults);
+		System.out.println("Page Fault Rate = " + ( (float) pageFaults) / numberOfAddresses);
+		System.out.println("TLB Hits = " + TLBHits);
+		System.out.println("TLB Hit Rate = " + ( (float) TLBHits) / numberOfAddresses);
+	}
+
+	public void runTranslation(String inputFile) throws java.io.IOException {
+		int virtualAddress;		
+		int physicalAddress;	
+		byte value;		
+		
+		try {
+			r = new BufferedReader(new FileReader(inputFile));
+			String stringValue;
+			
+			while ( (stringValue = r.readLine()) != null) {
+				virtualAddress = Integer.parseInt(stringValue);
+				physicalAddress = getPhysicalAddress(virtualAddress);
+				numberOfAddresses++;
+				value = getValue(physicalAddress);
+				System.out.println("Virtual address: " + virtualAddress + " Physical address: " + physicalAddress + " Value: " + value);
+			}
+			generateStatistics();
+		}
+		catch (java.io.IOException ioe) {
+			System.err.println(ioe);
+		}
+		finally {
+			r.close();
+		}
+	}
+
+	public static void main(String[] args) throws java.io.IOException {
+		if (args.length != 1) {
+			System.err.println("Usage: java VM <input file>");
+			System.exit(-1);
+		}
+		else {
+			VMsim vm = new VMsim();
+			vm.runTranslation(args[0]);
+		}
+	}
+}
